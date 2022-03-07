@@ -1,0 +1,426 @@
+---
+title: "Esports History"
+author: "Anthony Cruz"
+date: "10/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggrepel)
+library(gganimate)
+library(grid)
+library(gridExtra)
+library(ggthemes)
+
+# Data were downloaded from Kaggle
+general <- read.csv("GeneralEsportData.csv")
+historical <- read.csv("HistoricalEsportData.csv")
+```
+
+```{r wrangling, include=FALSE, warning=FALSE}
+
+# Extracting Year from Date in historical data
+historical$Year <- as.integer(str_extract(historical$Date, "[:digit:]{4}"))
+
+# Storing all time earnings as variables
+allTimeEarningsGeneral <- sum(general$TotalEarnings)
+allTimeEarningsHistorical <- sum(historical$Earnings)
+
+
+# Preparing useful aggregates from historical data
+historicalCounts <- historical %>%
+  group_by(Year) %>% 
+  summarize(Tournaments = sum(Tournaments), Players = sum(Players), Earnings = sum(Earnings)) %>% 
+  mutate(
+    EarningsPerTournament = Earnings / Tournaments,
+    EarningsPerPlayer = Earnings / Players,
+    PlayersPerTournament = Players / Tournaments)
+
+# Replacing low-earning genres with "Other"
+genreEarnings <- general %>% 
+  group_by(Genre) %>% 
+  summarize(TotalEarnings = sum(TotalEarnings), OnlineEarnings = sum(OnlineEarnings)) %>% 
+  mutate(ProportionTotalEarnings = TotalEarnings/sum(TotalEarnings))
+lowEarningGenres <- levels(as.factor(filter(genreEarnings, ProportionTotalEarnings < .05)$Genre))
+general <- general %>% mutate(Genre = case_when(Genre %in% lowEarningGenres ~ "Other",TRUE ~ Genre))
+genreEarnings <- general %>% 
+  group_by(Genre) %>% 
+  summarize(TotalEarnings = sum(TotalEarnings), OnlineEarnings = sum(OnlineEarnings)) %>% 
+  mutate(ProportionTotalEarnings = TotalEarnings/sum(TotalEarnings))
+
+# for ordering genres later on according to proportion of total earnings
+genreOrder <- levels(reorder(as.factor(genreEarnings$Genre), genreEarnings$ProportionTotalEarnings))
+
+# Pulling Top Games by Earnings, Tournaments, Players, and EarningsPerPlayer
+for (year in 1998:2021) {
+  yearData <- filter(historical, Year == year) # Iterate into current year only
+
+  topGame <- yearData[which.max(yearData$Earnings), "Game"]
+  historicalCounts[historicalCounts$Year == year, "TopGameByEarnings"] <- topGame
+
+  topGame <- yearData[which.max(yearData$Tournaments), "Game"]
+  historicalCounts[historicalCounts$Year == year, "TopGameByTournaments"] <- topGame
+
+  topGame <- yearData[which.max(yearData$Players), "Game"]
+  historicalCounts[historicalCounts$Year == year, "TopGameByPlayers"] <- topGame
+
+  topGame <- yearData[which.max(yearData$Earnings / yearData$Players), "Game"]
+  historicalCounts[historicalCounts$Year == year, "TopGameByEarningsPerPlayer"] <- topGame
+}
+
+# Attaching Genres to top games
+historicalCounts <- historicalCounts %>% 
+  rename(Game = TopGameByEarnings) %>% 
+  left_join(., select(general, Game, Genre), by = "Game") %>% 
+  rename(TopGameByEarnings = Game, TopGameByEarningsGenre = Genre) %>% 
+  rename(Game = TopGameByTournaments) %>% 
+  left_join(., select(general, Game, Genre), by = "Game") %>% 
+  rename(TopGameByTournaments = Game, TopGameByTournamentsGenre = Genre) %>% 
+  rename(Game = TopGameByPlayers) %>% 
+  left_join(., select(general, Game, Genre), by = "Game") %>% 
+  rename(TopGameByPlayers = Game, TopGameByPlayersGenre = Genre) %>% 
+  rename(Game = TopGameByEarningsPerPlayer) %>% 
+  left_join(., select(general, Game, Genre), by = "Game") %>% 
+  rename(TopGameByEarningsPerPlayer = Game, TopGameByEarningsPerPlayerGenre = Genre)
+
+# Saving genres as part of historical data
+historical <- left_join(historical, select(general, Game, Genre), by = "Game")
+
+# Saving Genre Total Earnings Proportion w/ Historical; for use in piechart
+historical <- historical %>% 
+  group_by(Year) %>% 
+  summarize(TotalEarningsThatYear = sum(Earnings)) %>% 
+  left_join(., historical, by = "Year") %>% 
+  select(1, 3:8,2)
+
+historical <- historical %>% 
+  mutate(ProportionYearlyEarnings = Earnings / TotalEarningsThatYear)
+
+# Removing these variables I don't need to keep in the global environment
+rm(year, topGame, yearData)
+```
+
+# Planning
+  Competitive video games, or esports, have been rising in worldwide popularity for decades. However, due to their relative novelty, there are no formal institutions responsible for tracking key metrics related to esport tournaments. This makes it difficult to find credible information on the evolution of esports relative to more traditional sports, such as baseball or football. The website https://www.esportsearnings.com/ attempts to remedy this problem by serving as a community-driven database for information on all sorts of esport tournaments, similar to a detailed Wikipedia page with data and references. This site may be not be comprehensive, but it contains details of tournaments as early as 1998 and should serve as a great source for tracking the evolution of esports over time. From user Ran.Kirsh on Kaggle (https://www.kaggle.com/rankirsh/esports-earnings), I have downloaded a web-scraped database of information available on this website.
+
+## Story
+  I am going to tell the story of the state of esports and how it has changed over the years. The proportion of total esports earnings attributed to each game genre has changed dramatically across the years, with newer game styles seemingly overtaking older styles. However, regardless of genre, prize earnings, number of tournaments, and number of tournament participants all increased over the years prior to the COVID-19 pandemic. 2015 seems to be a significant year in terms of these variables, as after this year, there appear to be substantially more tournaments, more tournament participants, and more tournament earnings. Through assessing changes in genre representation, earnings, number of tournaments, and number of players, I will characterize the rising popularity of esports and some factors that may have affected it.
+
+## Plots
+  First, I will create a pie chart to visualize how all-time esport tournament earnings are distributed by genre. Then, I will create a bar graph showing how this distribution has changed over time. My third plot will show raw totals of tournament earnings, number of tournaments, and number of tournament participants each year. My final plot will visualize the overall amount of players, tournaments, and earnings each year in one plot.
+
+# Publication
+
+```{r pubOne, echo=FALSE, warning=FALSE,  message=FALSE, results='hide', fig.height=6, fig.width=9}
+
+earningsPieChart <-  genreEarnings %>% 
+  group_by(Genre) %>% 
+  ggplot(aes(x = "", y = ProportionTotalEarnings, fill = fct_relevel(Genre, genreOrder), label = round(ProportionTotalEarnings, 2))) +
+  geom_col(position = "stack", width = 1) +
+  geom_text(aes(label = paste(round(ProportionTotalEarnings * 100, 1), "%"), x = 1.25),
+            # old label = paste(Genre, "\n", round(proportionEarnings * 100, 1), "%")
+            position = position_stack(vjust = 0.5), color = c("black", "black", "black", "black", "white")) +
+  coord_polar("y") + theme_minimal() + 
+  theme(plot.title = element_text(hjust=0, face = "bold"),
+                          plot.subtitle = element_text(hjust = 0, face = "italic"),
+                          axis.line = element_blank(),
+                          axis.text = element_blank(),
+                          axis.ticks = element_blank(),
+                          panel.border = element_blank(),
+                          panel.grid = element_blank(),
+                          panel.background = element_rect(color ="black", fill = NULL),
+                          legend.position = c(.22, .15),
+                          plot.tag.position = "topleft",
+                          plot.tag = element_text(face = "bold")) +
+  labs(x = NULL, y = NULL, fill = "Genre", title = "Figure 1", 
+       subtitle = "Percentage of All-Time Esport Tournament Earnings from each Genre") +
+  scale_fill_grey()
+earningsPieChart
+
+# rm(i, currentData, totalEarnings, earningsBarGraph, earningsPieChart)
+
+```
+
+```{r pubTwo, echo=FALSE, warning=FALSE,  message=FALSE, results='hide', fig.height=6, fig.width=9}
+
+earningsBarGraph <- historical %>%
+  group_by(Year, Genre) %>%
+  summarize(ProportionEarnings =( sum(Earnings) / mean(TotalEarningsThatYear))) %>%
+  ggplot(aes(x = Year, y = ProportionEarnings, fill = fct_relevel(Genre, genreOrder))) +
+  geom_col(position = "stack", width = .9) +
+  geom_vline(xintercept = 2017, linetype = "dashed") +
+  annotate("rect", fill = "white", color = "black", xmin = 2013.9, xmax = 2018.2, ymin = .55, ymax = .65) +
+  annotate("text", label = paste0("2017:\nFortnite is released") , parse = FALSE, x = 2018.1, y = .64, hjust = 1, vjust = 1) +
+  theme_minimal() + theme(plot.title = element_text(hjust=0, face = "bold"),
+                          plot.subtitle = element_text(hjust = 0, face = "italic"),
+                          
+                          panel.grid = element_blank(),
+                          # plot.background =  element_rect(color ="black", fill = NA),
+                          axis.line = element_line(color = "black"),
+                          axis.ticks.x = element_line(color = "black"),
+                          
+                          
+                          legend.position = c(.2, .25),
+                          legend.background = element_rect(fill = "white")) +
+  labs(x = "Year", y = "Proportion of Total Earnings", title = "Figure 2",
+       subtitle = "Proportion of Yearly Earnings by Genre", fill = "Genre") +
+  scale_fill_grey() + scale_x_continuous(breaks = 1998:2021,
+                                         labels = c("", "", 2000, "","","","",2005,"","","","",2010,"","","","",2015,"","","","",2020,""))
+
+earningsBarGraph
+
+```
+
+
+```{r pubThree, echo = FALSE, warning=FALSE, fig.height=8, fig.width=9}
+
+
+# Gets totals by Year and Genre
+historicalByYearByGenre <-  historical %>% 
+  group_by(Year, Genre) %>% 
+  summarize(Earnings = sum(Earnings), Tournaments = sum(Tournaments), Players = sum(Players))
+
+# Gets total just by Year
+historicalByYear <- historical %>% 
+  group_by(Year) %>% 
+  summarize(Earnings = sum(Earnings), Tournaments = sum(Tournaments), Players = sum(Players)) %>% 
+  mutate(Genre = "Total") %>% select(Year, Genre, Earnings, Tournaments, Players)
+
+# Combining both of these data.frames
+historicalTotals <- rbind(historicalByYearByGenre, historicalByYear) %>% 
+  mutate(Earnings = Earnings / 1000000) # Making Earnings be in terms of Millions of USD
+
+historicalTotals <- pivot_longer(historicalTotals, cols = c(Earnings, Tournaments, Players), names_to = "Variable", values_to = "Total")
+
+# Earnings
+plotThree <-  historicalTotals %>% 
+  ggplot(aes(x = Year, y = Total, group = Variable, fill = fct_relevel(Genre, genreOrder))) +
+  geom_col(. %>% filter(Genre != "Total"), mapping = aes(fill = fct_relevel(Genre, genreOrder)), position = "stack", width = .9) +
+  facet_grid(rows = "Variable",
+             scales = "free",
+             labeller = as_labeller(c(
+               Earnings = "Earnings (Millions of USD)", 
+               Players = "Number of Tournament Entrants", 
+               Tournaments = "Number of Tournaments"))) +
+  geom_vline(xintercept = 2019.525, color = "black", linetype = "dashed", size = 1.05) +
+  geom_label(data = data.frame(Year = 2019.75, Genre = "Strategy", Variable = "Earnings", Total = 190),
+             label = "2020:\nCOVID-19\npandemic", fill = "white", hjust = 0, label.r = unit(0, "inches")) +
+  
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust=0, face = "bold"),
+        plot.subtitle = element_text(hjust = 0, face = "italic"),
+        legend.position = c(.215,.5),
+        legend.background = element_rect(fill = "white"),
+    
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(color = "black"),
+        strip.placement = "outside",
+        strip.text = element_text(size = 10)) +
+  labs(x = "Year", y = NULL, title = "Figure 3", 
+       subtitle = "Total Amount of Earnings, Players, and Tournaments Each Year", 
+       fill = "Genre") +
+  scale_fill_grey() + scale_y_continuous(position = "right")
+
+plotThree 
+
+```
+
+```{r pubFour, echo = FALSE, warning=FALSE, fig.height=6, fig.width=9}
+
+ptModel <- glm(Players ~ Tournaments, data = historicalCounts)
+ptSlope <- ptModel$coefficients[2]
+ptIntercept <- ptModel$coefficients[1]
+
+historicalCounts %>% ggplot(aes(x = Tournaments, y = Players, size = Earnings / 1000000)) +
+  geom_point(color = "darkgray", pch = 19) +
+  geom_text_repel(aes(label = Year), show.legend = FALSE) +
+  geom_abline(slope = ptSlope, intercept = ptIntercept, linetype = "dashed", alpha = .8) +
+  
+  labs(title = "Figure 4", subtitle = "Players per Tournament Each Year since 1998",
+       x = "Number of Tournaments", y = "Number of Tournament Participants", size = "Earnings\n(Millions of USD)") +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    
+    legend.position = c(.2,.8),
+    legend.background = element_rect(fill = NA, color = "black"),
+    
+    panel.grid = element_blank(),
+    
+    axis.line = element_line(color = "black")
+  )
+
+```
+
+## Summary
+  **Figure 1** shows the proportion of all-time earnings attributed to each game genre. Genres representing less than 5% of all-time earnings (`r lowEarningGenres`) will be collectively referred to as "Other" for the remainder of this analysis. **Figure 2** shows the proportion of total tournament earnings attributed to each genre in a given year. Interestingly, the Battle Royale genre seems to rise to prominence following the release of the popular Battle Royale game *Fortnite* in 2017. Despite its relative novelty, this genre now represents 16.8% of all-time earnings, ranking third overall.
+  
+  **Figure 3** shows the raw amounts of tournament earnings, participants, and tournaments over the years. One clear observation is that COVID-19 severely impacted each of these metrics, showing a substantial decrease in 2020 following the peaks in 2019. Also of note is that the total number of tournaments seems to plateau while earnings and players continue to rise, suggesting that more players were entering tournaments and that tournaments began to have larger prizes.
+  
+  **Figure 4** shows the total number of players and tournaments per year, with the size of each point rperesenting total earnings. Interestingly, tournaments in 2015 and beyond seem to cluster together, having larger amounts of players, tournaments, and earnings than earlier years. The dashed line indcates a line of regression, which indicates the amount of players per tournament has steadily risen since 1998.
+  
+## Justification
+  In each of these plots, I kept the color scale consistent, making it easy to tell apart genres from plot to plot. Since these plots are intended for publication, I kept the color scheme to a gray-scale, which is easy to read but is not distracting. Figure titles and subtitles follow APA guidelines. I included gridlines in **Figure 3** for clarity.
+
+# Dynamic
+
+
+```{r dynamicOne, echo=FALSE, warning=FALSE, fig.height=7, fig.width=7}
+# INSTEAD, do a bar graph with x = genre, y = proportion of total earnings, transition_time = Year
+
+earningsPieChart <-  genreEarnings %>% 
+  group_by(Genre) %>% 
+  ggplot(aes(x = "", y = ProportionTotalEarnings, fill = fct_relevel(Genre, genreOrder), label = round(ProportionTotalEarnings, 2))) +
+  geom_col(position = "stack", width = 1) +
+  geom_text(aes(label = paste(round(ProportionTotalEarnings * 100, 1), "%"), x = 1.25),
+            # old label = paste(Genre, "\n", round(proportionEarnings * 100, 1), "%")
+            position = position_stack(vjust = 0.5), color = c("black", "black", "black", "black", "black")) +
+  coord_polar("y") + theme_minimal() + 
+  theme(plot.title = element_text(hjust=.5, face = "bold"),
+                          axis.line = element_blank(),
+                          axis.text = element_blank(),
+                          axis.ticks = element_blank(),
+                          panel.border = element_blank(),
+                          panel.grid = element_blank(),
+                          panel.background = element_blank(),
+                          legend.position = c(.22, .15),
+                          plot.tag.position = "topleft",
+                          plot.tag = element_text(face = "bold")) +
+  labs(x = NULL, y = NULL, fill = "Genre", title = "Proportion of All-Time Esport Earnings by Genre") +
+  scale_fill_brewer(palette = "Set1")
+earningsPieChart
+
+```
+
+```{r dynamicTwo, echo=FALSE, warning=FALSE, fig.height=10, fig.width=9}
+# Total earnings for each genre animated across each year Animated plot earnings by year each genre, 
+
+historicalProps <- historical %>% 
+  group_by(Year, Genre) %>% 
+  summarize(ProportionEarnings = sum(ProportionYearlyEarnings))
+
+historicalPropsCopy <- historicalProps
+
+gganimTwo <-  historicalProps %>% 
+  ggplot(aes(x = Year, y = ProportionEarnings, fill = fct_relevel(Genre, genreOrder))) +
+  geom_col(data = historicalPropsCopy, position = "stack", show.legend = TRUE, width = 1) +
+  # geom_label(fill = "white", hjust = 0, show.legend = FALSE) +
+  transition_states(Year) + shadow_mark() + view_follow(fixed_x = c(1998, NA)) +
+  
+  labs(
+    x = "Year", y = NULL, fill = NULL,
+    title = "Proportion of Total Earnings by Genre in Each Year"
+       ) +
+  theme_tufte(base_family = "sans") +
+  theme(
+    plot.title = element_text(face = "bold", hjust = .5, size = 14),
+    plot.subtitle = element_text(face = "bold", hjust = .5, size = 13),
+    legend.position = "bottom",
+    legend.title.align = .5
+  ) +
+  scale_fill_brewer(palette = "Set1") + scale_x_continuous(breaks = seq(1998, 2021,3), labels = seq(1998, 2021,3))
+
+animate(gganimTwo, end_pause = 10)
+
+```
+
+```{r dynamicThree, echo=FALSE, warning=FALSE, fig.height=10, fig.width=9}
+# X = genre, y = measure, transition_state = Year, facet by measure
+
+# Gets totals by Year and Genre
+historicalByYearByGenre <-  historical %>% 
+  group_by(Year, Genre) %>% 
+  summarize(Earnings = sum(Earnings), Tournaments = sum(Tournaments), Players = sum(Players))
+
+# Gets total just by Year
+historicalByYear <- historical %>% 
+  group_by(Year) %>% 
+  summarize(Earnings = sum(Earnings), Tournaments = sum(Tournaments), Players = sum(Players)) %>% 
+  mutate(Genre = "Total") %>% select(Year, Genre, Earnings, Tournaments, Players)
+
+# Combining both of these data.frames
+historicalTotals <- rbind(historicalByYearByGenre, historicalByYear) %>% 
+  mutate(Earnings = Earnings / 1000000) # Making Earnings be in terms of Millions of USD
+
+historicalTotals <-historicalTotals %>% 
+  pivot_longer(cols = c(Earnings, Tournaments, Players), names_to = "Variable", values_to = "Total")
+
+historicalTotals <-historicalTotals %>% 
+  filter(Genre != "Total") %>% 
+  mutate(
+    Genre = case_when(
+      Genre == "Multiplayer Online Battle Arena" ~ "MOBA",
+      TRUE ~ Genre),
+    
+  )
+
+
+gganimThree <- historicalTotals %>% ggplot(aes(y = Genre, x = Total, fill = fct_relevel(Genre, genreOrder))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(Variable~., ncol = 1, scales= "free") +
+  transition_time(Year) +
+  
+  labs(title = "Total Earnings, Players, and Tournaments by Genre in {frame_time}",x = "Total Amount", y = "Genre") +
+  
+  theme_tufte(base_family = "sans") +
+  scale_fill_brewer(palette = "Set1")
+
+animate(gganimThree, end_pause = 10)
+
+```
+
+```{r dynamicFour, echo=FALSE, warning=FALSE, fig.height=9, fig.width=12}
+
+gganim <-  historical %>% filter(Year < 2020) %>%  ggplot(aes(x = Tournaments, y = Players, size = Earnings, color =fct_relevel(Genre, genreOrder))) +
+  geom_point(alpha = .8) +
+  facet_wrap(~Genre, ncol = 2, scales = "free") +
+  transition_states(Year, 4, 2) + shadow_wake(wake_length = .05) +
+  
+  labs(title = "Relationship among Players, Tournaments, and Earnings", subtitle = "{closest_state}",
+       x = "Number of Tournaments", y = "Number of Tournament Participants", size = "Earnings (USD)", color = "Genre") +
+  
+  theme_tufte(base_family = "sans") +
+  theme(
+    plot.title = element_text(hjust = .5),
+    plot.subtitle = element_text(hjust = .5),
+    
+    legend.position = "none",
+  ) +
+  scale_color_brewer(palette = "Set1")
+  
+
+animate(gganim, end_pause = 15)
+
+```
+
+
+## Summary
+  The first plot shows the proportion of all-time esport earnings attributed to each genre. The second plot adds to this, showing this change over time with an animated effect. The effect of  The third plot demonstrates how total amount of earnings, participants, and tournaments have changed over the years for each genre. There is a general increase, but there are some interesting trends to note, such as the fact that "Other" genres have been having more tournaments and players over the years, but still represent low amounts of tournament earnings, indicative of low funding despite popularity. The drop following the COVID-19 pandemic in 2020 is also apparent.
+  The fourth plot shows data on number of players and tournaments for each genre. Each genre has numerous games involved, and each data point on the plot represents a different game within the genre.
+
+## Justification
+
+For all of these plots, I used a color palette that makes differences between groups clearer. In the second plot, bars are touching, making it easy to follow color-to-color across the x-axis. In the third plot, unlike **Figure 3**, it is easy to compare among genres. The fourth plot provides more detailed information than **Figure 4**, showing the number of games involved in each genre rather than just raw totals.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
