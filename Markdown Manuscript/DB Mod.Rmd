@@ -1,0 +1,520 @@
+---
+title: "Reliability and Internal Consistency of a Domain-General Adaptation of the Downs-Black (1998) Tool"
+author: "Anthony Cruz"
+date: "12/8/2021"
+output:
+  word_document:
+    reference_docx: apa_reference.docx
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(ggrepel)
+library(corrplot) # Correlation Matrix/Table
+library(psych) # Getting Cronbach's Alpha + other psychometrics
+library(flextable)
+
+options(scipen = 999) # Displays more digits in integers
+
+# Reading in data and doing some initial cleaning
+dbMod = read.csv("DB Mod Data (9 Nov 2021).csv")[3:26,] %>% 
+  select(Q.1:Q28_1) %>% 
+  rename(reviewer = Q.1, study = Q0, globalScore = Q28_1) %>% 
+  mutate(reviewer = case_when( # Removing emails from this column; not needed
+    reviewer == "crumblet@uwo.ca" ~ "A",
+    TRUE ~ "B"
+  ))
+N <- length(dbMod$reviewer) # Should be 24
+dbModScored <- dbMod
+for (i in names(dbMod)[3:29]) { # Scoring the data, which was not done natively in Qualtrics
+  if (i != "Q5" & i != "Q27") {
+    dbModScored[i] <- as.integer(dbModScored[i] == "Yes")
+  } else if (i == "Q5") {
+    dbModScored[i] <- as.integer(dbModScored[i] == "Yes") + as.integer(dbModScored[i] != "No")
+  } else {
+    for (j in 1:N) {
+      if (dbModScored[j, i] == "25+") {
+        dbModScored[j, i] <- 5
+      } else if (dbModScored[j, i] == "21-25") {
+        dbModScored[j, i] <- 4
+      } else if (dbModScored[j, i] == "16-20") {
+        dbModScored[j, i] <- 3
+      } else if (dbModScored[j, i] == "11-15") {
+        dbModScored[j, i] <- 2
+      } else if (dbModScored[j, i] == "5-10") {
+        dbModScored[j, i] <- 1
+      } else {
+        dbModScored[j, i] <- 0
+      }
+    }
+  }
+}
+rm(i,j,N) # Removing these looping variables from the environment
+
+# Fixing variable types
+dbModScored$Q27 <- as.integer(dbModScored$Q27)
+dbModScored$globalScore <- as.integer(dbModScored$globalScore)
+
+# Adding subscales to full data frame
+dbModScored <- dbModScored %>%
+  mutate(
+    reporting = Q1 + Q2 + Q3 + Q4 + Q5 + Q6 + Q7 + Q8 + Q9 + Q10,
+    externalValidity = Q11 + Q12 + Q13,
+    bias = Q14 + Q15 + Q16 + Q17 +Q18+Q19+Q20,
+    confounding = Q21+Q22+Q23+Q24+Q25+Q26,
+    validity = Q11 + Q12 + Q13 +Q14 + Q15 + Q16 + Q17 +Q18+Q19+Q20+Q21+Q22+Q23+Q24+Q25+Q26
+  ) %>% mutate(
+    qualityIndexNoPower = reporting + validity
+  ) %>% mutate(
+    qualityIndex = qualityIndexNoPower+Q27
+  )
+
+# Creates Wide-Form Dataframe
+# This is valuable because each study is one observation for inter-rater reliability
+baseItemNames <- names(dbModScored)[3:29] # Helpful for looping through items later
+baseAggregateNames <- names(dbModScored)[30:37] # Helpful for looping through subscales later
+dbModScoredWide <- dbModScored %>%
+  pivot_wider(names_from = reviewer, values_from = Q1:qualityIndex, names_sep = "")
+
+# Project Guidelines
+## Sufficient Intro and Discussion needed
+## Use APA-themed reference document for knitting
+## Analytic sophistication will play a role
+## Minimum length accepted by journal (probably ~6 pages)
+## Submit as a .zip file
+set_flextable_defaults(
+  font.size = 12,
+  font.family = "Arial",
+  text.align = "center"
+)
+
+```
+
+```{r parameters, include = FALSE}
+#### Can Be Adjusted ####
+bootstrapSamples <- 20000 # Number of bootstraps to take when doing CIs for IRR
+confIntSize <- .9 # Size of Confidence Interval to provide
+
+#### Don't Mess with These ####
+significanceLevel <- 1 - confIntSize
+lowerConfInt <- significanceLevel / 2
+upperConfInt <- 1 - lowerConfInt
+```
+
+# Abstract
+
+Here, we assess the reliability and internal consistency of a domain-general modification to the Downs-Black tool, a checklist for the assessment of methodological quality in studies of healthcare interventions (Downs & Black, 1998). The tool is valid and reliable but is not well-suited for studies unrelated to healthcare interventions. Our modification of this tool is intended for use in a wider variety of research areas, such as the social and behavioral sciences, which do not often include risk of bias assessments in their literature reviews. We asked two independent Raters to use our modified Downs-Black tool to assess the quality of a set of 12 research articles and used their scores to assess the inter-rater reliability and internal consistency of the tool. Our results suggest that this tool has sufficient reliability and internal consistency for assessing the risk of bias in systematic reviews outside the healthcare domain. Future research should assess the quality of this checklist for a wider variety of review subjects and using Raters with differing levels of expertise.
+
+# Reliability and Internal Consistency of a Domain-General Adaptation of the Downs-Black (1998) Tool
+
+Literature review is paramount to the development of scientific ideas, but all literature reviews are not created equal. Reviews can easily become subject to bias,  systematic error in results leading to overestimation or underestimation of effects (Boutron et al., 2021). A systematic review is a type of evidence synthesis that minimizes risk of bias  through the identification, appraisal (or risk of bias assessment), and synthesis of all relevant research on a given topic (Uman, 2011). Bias can arise from the actions of primary investigators or from the actions of reviewers, whether intentional or not. Assessing the risk of bias (rather than bias itself, as it is impossible to truly assess bias) allows for scrutiny of the results. This feature is typically absent in narrative reviews  , which are commonplace in the social and behavioral sciences, such as psychology.
+	
+There is currently no common, domain-general tool for the appraisal of non-clinical studies. There exist many tools for appraising clinical studies, however (Page et al., 2018). One such tool is the Downs-Black (1998) Tool, which assesses the external validity, internal validity, and open reporting in a given study  . This tool is valid and reliable, but very domain-specific; it is not well-suited for studies outside of the healthcare domain. From 2012 to the time of writing, Web of Science reports that this paper has been cited 3870 times (Web of Science). Of these citations, the vast majority come from categories related to health or medicine; only 72 come from Psychology and 1 from Sociology. This domain specificity is not unique to the Downs-Black Tool. Page et al. (2018) conducted a systematic review of risk of bias assessment tools and found that the vast majority of available tools are domain-specific. Despite obvious differences between clinical trials and empirical psychological studies, there are key similarities that make the risk of bias assessment tools used in clinical trials adaptable to the non-clinical literature. In other words, given the clear need for a reliable quality assessment tool for conducting systematic reviews in non-clinical domains and given the wide-spread adoption of tools like Downs-Black, we addressed this with a modification of the Downs-Black, rather than starting from scratch to build our own domain-specific tool. By adopting this approach, we retain many of the advantages of Downs-Black but extend its use and generalizability.
+
+The present study is a reliability and internal consistency assessment for a domain-general modification of the Downs-Black Tool. If valid and reliable, this tool may make risk of bias assessment in the social and behavioral sciences more commonplace. Given their similarities, we are expecting this tool and the original Downs & Black (1998) Tool to have similar reliability and internal consistency.
+
+# Methods
+
+## Pre-Registration
+The design and pre-analytic plan for this study were pre-specified in an open-ended registration uploaded to Open Science Framework in October 2021 (https://osf.io/8ycj9).
+
+## Sample
+The sample size for this study (i.e. the number of papers that were analyzed) was chosen using an a priori power analysis in G*Power 3.1.9.7 (Faul et al., 2007). With power=.95, false positive rate α=.05, and effect size |ρ|=.77 (from Downs & Black, 1998), the projected sample size needed for this study was N=12. Dropouts and incomplete data were non-issues due to the nature of this study. The set of 12 empirical research articles (published between 2006 and 2018) to be assessed were chosen arbitrarily from a set of articles that advanced past title & abstract screening for a related systematic  review (pre-registered at https://osf.io/5dmau). The goal of this related review is to catalog the extant research examining neural evidence of changes in stimulus representation that result from artificial category learning. At the time of the present Downs-Black modification project, the papers we included here had not yet been fully screened and may not be included in the final review, but it can be assumed that their contents are related to the topic of the review.
+
+## Survey Design
+Our modification of the Downs-Black Tool is homologous to the original Downs-Black Tool in terms of scoring and subscales. Each checklist item receives a score and the total score can fall between 0 and 31. The total score will be referred to as the Quality Index. This checklist includes the following subscales: Reporting (items 1-10), External Validity (items 11-13), Internal Validity - Bias (Items 14-20), Internal Validity - Confounding (Items 21-26), Validity (items 11-26), and Power (item 27). At the end of the checklist, each Rater  is asked to provide a subjective rating, ranging from 0 to 10, of the overall quality of the study. This measure will be referred to as the Global Score. Several items were reworded to support use outside of the clinical domain. Of the 27 survey items, 19 were modified. The final survey was uploaded to Qualtrics. Responses were required for all items, barring an optional question asking if Raters have any questions or comments related to the assessment. Raters completed the assessment independently and remotely for each study in no particular order.
+
+## Test Procedure
+Two Raters  assessed each study. These Rater s were familiar with the protocol and assisted in title & abstract screening for the related systematic review. However, they were not involved in the development of this checklist or the development of the protocol for the present research. They were also not explicitly instructed that they were piloting this tool for a study on reliability. Rather, they were instructed that we were assessing the feasibility of conducting risk of bias assessment on Qualtrics. Data collection ran from the 25th of June 2021 to the 5th of November 2021.
+
+# Results
+
+Rater A's mean Quality Index was `r mean(dbModScoredWide$qualityIndexA)` (Inter-Quartile Range: [`r quantile(dbModScoredWide$qualityIndexA, c(.25,.75))`]). Rater B's mean Quality Index was `r mean(dbModScoredWide$qualityIndexB)` (Inter-Quartile Range: [`r quantile(dbModScoredWide$qualityIndexB, c(.25,.75))`]). Overall, the Quality Index had a mean score of `r mean(dbModScored$qualityIndex)` (Inter-Quartile Range: [`r quantile(dbModScored$qualityIndex, c(.25,.75))`]). See Table 1 for a summary of each subscale.
+
+## Table 1
+### Subscale Summary Data
+```{r descriptives, echo=FALSE}
+
+descriptiveTable <- data.frame(
+  Subscale = c("Reporting", "External Validity", "Internal Validity - Bias", "Internal Validity - Confounding", "Power"),
+  mu = round(c(
+    mean(dbModScored$reporting),
+    mean(dbModScored$externalValidity),
+    mean(dbModScored$bias),
+    mean(dbModScored$confounding),
+    mean(dbModScored$Q27)
+  ),3),
+  low = round(c(
+    quantile(dbModScored$reporting, c(.25)),
+    quantile(dbModScored$externalValidity, c(.25)),
+    quantile(dbModScored$bias, c(.25)),
+    quantile(dbModScored$confounding, c(.25)),
+    quantile(dbModScored$Q27, c(.25))
+  ),3),
+  high = round(c(
+    quantile(dbModScored$reporting, c(.75)),
+    quantile(dbModScored$externalValidity, c(.75)),
+    quantile(dbModScored$bias, c(.75)),
+    quantile(dbModScored$confounding, c(.75)),
+    quantile(dbModScored$Q27, c(.75))
+  ),3)
+) %>% 
+  rename("Mean" = mu, "25th Percentile" = low, "75th Percentile" = high)
+
+flextable(descriptiveTable) %>% 
+  add_header_row(values = c("", "Inter-Quartile Range"), colwidths = c(2,2)) %>% 
+  border_remove() %>% 
+  hline_top() %>% hline_bottom() %>% hline_top(part = "header") %>% hline(i = 1, j = 3:4, part = "header") %>% 
+  width(width = 6.5 / 4) %>% 
+  align(align = "center", part = "all") %>% valign(part = "all")
+cat("\n")
+
+```
+*Note.* The values in this table are taken across both Raters.
+
+## Inter-Rater Reliability
+
+### Quality Index and Subscales
+```{r spearmanIRR, echo=FALSE, warning=FALSE}
+mainBaseAggregateNames <- baseAggregateNames[c(2,3,4,5,8)]
+sampleSize <- length(dbModScoredWide$study)
+
+bootstrappedIRRs <- data.frame(
+  reportingIRR = numeric(),
+  externalValidityIRR = numeric(),
+  biasIRR = numeric(),
+  confoundingIRR = numeric(),
+  qualityIndexIRR = numeric()
+)
+
+set.seed(666)
+for (i in 1:bootstrapSamples) {
+  bootstrappedSample <- dbModScoredWide[sample(1:12,12,replace=T),]
+  currentIRRs <- numeric()
+  
+  for (agg in mainBaseAggregateNames) {
+    dataA <- as.numeric(unlist(bootstrappedSample[,paste0(agg, "A")]))
+    dataB <- as.numeric(unlist(bootstrappedSample[,paste0(agg, "B")]))
+    aggB <- paste0(agg, "B")
+    
+    spearmanResult <- cor.test(x =  dataA, y =  dataB, method = "spearman")
+    
+    currentIRRs <- append(currentIRRs, spearmanResult$estimate)
+  }
+  bootstrappedIRRs[i,] <- currentIRRs
+}
+
+irrCI <- data.frame(
+  reporting = round(unname(quantile(bootstrappedIRRs$reportingIRR, c(lowerConfInt, upperConfInt), na.rm = T)),3),
+  bias = round(unname(quantile(bootstrappedIRRs$biasIRR, c(lowerConfInt, upperConfInt), na.rm = T)),3),
+  confounding = round(unname(quantile(bootstrappedIRRs$confoundingIRR, c(lowerConfInt, upperConfInt), na.rm = T)),3),
+  qualityIndex = round(unname(quantile(bootstrappedIRRs$qualityIndexIRR, c(lowerConfInt, upperConfInt), na.rm = T)),3)
+)
+
+```
+We assessed inter-rater reliability at the Quality Index and subscale levels using Spearman correlations. Confidence intervals were obtained using `r bootstrapSamples` random bootstrapped samples identical in size to those used in the study. The inter-rater Quality Index correlation was significant, r = `r round(cor(dbModScoredWide$qualityIndexA, dbModScoredWide$qualityIndexB, method = "spearman"),3)` (`r confIntSize*100`% CI: [`r round(irrCI$qualityIndex, 3)`]). Due to the lack of variability within the External Validity subscale, it was impossible to compute the Spearman correlation for this subscale. Correlations for the other subscales are reported in Table 2.
+
+## Table 2
+### Inter-Rater Spearman Correlations
+```{r spearmanTable, echo = FALSE}
+
+rVals <- c(
+  round(cor(dbModScoredWide$reportingA, dbModScoredWide$reportingB, method = "spearman"),3),
+  round(cor(dbModScoredWide$biasA, dbModScoredWide$biasB, method = "spearman"),3),
+  round(cor(dbModScoredWide$confoundingA, dbModScoredWide$confoundingB, method = "spearman"),3)
+)
+
+spearmanTable <- data.frame(
+  subscale = c("Reporting", "Bias", "Confounding"),
+  r = rVals,
+  lowCI = t(irrCI[1,][1:3]),
+  highCI = t(irrCI[2,][1:3])
+) %>% 
+  rename("Lower Limit" = X1, "Upper Limit" = X2, "Subscale" = subscale) %>% 
+  mutate(Subscale = case_when(
+    Subscale == "Bias" ~ "Internal Validity - Bias",
+    Subscale == "Confounding" ~ "Internal Validity - Confounding",
+    TRUE ~ Subscale
+  ))
+
+flextable(spearmanTable) %>% 
+  add_header_row(values = c("", paste0("Bootstrapped ", confIntSize*100,"% Confidence Interval")), colwidths = c(2,2)) %>% 
+  border_remove() %>% 
+  hline_top() %>% hline_bottom() %>% hline_top(part = "header") %>% hline(i = 1, j = 3:4, part = "header") %>% 
+  width(width = 6.5 / 4) %>% 
+  align(align = "center", part = "all") %>% valign()
+
+```
+### Item-by-Item
+```{r itemIRR, include = FALSE, warning=FALSE}
+
+percentDisagree <- c()
+cohenKappa <- c()
+for (item in baseItemNames) {
+  itemA <- paste0(item, "A")
+  itemB <- paste0(item, "B")
+  percentDisagree <- append(percentDisagree, round(100*sum(dbModScoredWide[itemA] != dbModScoredWide[itemB])/12, 3))
+  cohenKappa <- append(cohenKappa, round(cohen.kappa(data.frame(dbModScoredWide[itemA], dbModScoredWide[itemB]))$kappa, 3))
+}
+
+itemIRR <- data.frame(
+  Item = baseItemNames,
+  "Percent Disagreement" = percentDisagree,
+  "Cohen's Kappa" = cohenKappa
+)
+itemIRR <- itemIRR %>% 
+  rename("Percent Disagreement" = Percent.Disagreement, "Cohen's Kappa" = Cohen.s.Kappa)
+itemIRR$Subscale <- c(
+  rep("Reporting",10),
+  rep("External Validity", 3),
+  rep("Internal Validity - Bias", 7),
+  rep("Internal Validity - Confounding", 6),
+  "Power"
+)
+
+```
+Cohen’s Kappa and percent disagreement were computed for each item in the scale. These values are reported in Table 3. On average, Raters only disagreed `r round(mean(itemIRR$"Percent Disagreement"),3)`% of the time. 12 of the 27 items (44%) had poor agreement, similar to the 11 of 26 (42%) reported by Downs & Black (1998). 7 of the 27 items (26%) had no inter-rater disagreement, higher than the 2 of 26 (8%) reported by Downs & Black (1998).
+
+## Table 3
+### Item-by-Item Inter-Rater Reliability
+```{r itemIRRTable, echo = FALSE}
+
+# col_keys = c(names(internalConsistency)[4], "KR-20", "Alpha", names(internalConsistency)[1:3])) %>% 
+
+flextable(itemIRR, col_keys = c("Subscale", "Item", "Percent Disagreement", "Cohen's Kappa")) %>% 
+  merge_at(i = 1:10, j = 1) %>% merge_at(i = 11:13, j = 1) %>% merge_at(i = 14:20, j = 1) %>% merge_at(i = 21:26, j = 1) %>%
+  border_remove() %>% 
+  hline_top() %>% hline_bottom() %>% hline_top(part = "header") %>% 
+  hline(i = c(10, 13, 20, 26)) %>% 
+  width(width = 6.5 / 4) %>% 
+  align(align = "center", part = "all") %>% valign()
+# Add subscales on left and super-heading saying "Inter-rater reliability"
+```
+
+## Internal Consistency
+
+Internal consistency was assessed for individual items and for overall subscales using Cronbach's alpha, alpha-if-item-removed, and the KR-20. Note that the KR-20 is designed for use with dichotomous outcomes. Item 5 in this checklist is nondichotomous, but we include the KR-20, regardless, for the sake of comparison with Downs & Black (1998). Item 5 was dichotmoized by treated "Partially" and "Yes" responses identically. Table 4 describes the results. Inter-item correlations were also computed and are shown in Figure 1. Note that the items excluded from this figure had no variability, making it impossible to compute correlations.
+
+```{r alphaAndKR20, include = FALSE, warning = FALSE}
+## Here, you should make a table with Alpha and Alpha if item deleted
+
+reporting <- dbModScored %>% select(Q1:Q10)
+reportingAlpha <- alpha(reporting)
+
+internalConsistency <- data.frame(
+  item = rownames(reportingAlpha$alpha.drop),
+  alphaIfRemoved = reportingAlpha$alpha.drop$raw_alpha,
+  subscaleAlpha = rep(reportingAlpha$total$raw_alpha, length(rownames(reportingAlpha$alpha.drop)))
+)
+
+# NA values because of the lack of variability in External Validity
+# externalValidity <- dbModScored %>% select(Q11:Q13)
+# externalValidityAlpha <- alpha(externalValidity)
+
+bias <- dbModScored %>% select(Q14:Q20)
+biasAlpha <- alpha(bias) # Q15 is not included because sd = 0ro
+
+internalConsistency <- rbind(
+  internalConsistency,
+  data.frame(
+    item = rownames(biasAlpha$alpha.drop),
+    alphaIfRemoved = biasAlpha$alpha.drop$raw_alpha,
+    subscaleAlpha = rep(biasAlpha$total$raw_alpha, length(rownames(biasAlpha$alpha.drop)))
+  )
+)
+
+confounding <- dbModScored %>% select(Q21:Q26)
+confoundingAlpha <- alpha(confounding)
+
+internalConsistency <- rbind(
+  internalConsistency,
+  data.frame(
+    item = rownames(confoundingAlpha$alpha.drop),
+    alphaIfRemoved = confoundingAlpha$alpha.drop$raw_alpha,
+    subscaleAlpha = rep(confoundingAlpha$total$raw_alpha, length(rownames(confoundingAlpha$alpha.drop)))
+  )
+)
+
+internalConsistency <- internalConsistency %>% 
+  mutate(ifRemovedChange = alphaIfRemoved - subscaleAlpha) %>% 
+  select(item, alphaIfRemoved, ifRemovedChange) %>% 
+  rename("Alpha if Item Removed" = alphaIfRemoved, "Change in Alpha if Item Removed" = ifRemovedChange, "Item" = item)
+
+# First, Dichotomize Q5 by testing x == 0
+# Then, use Alpha. Alpha = KR-20 when values are dichotomous.
+
+reportingDich <- reporting %>% 
+  mutate(Q5 = as.integer(Q5 == 0))
+
+reportingDichAlpha <- alpha(reportingDich)$total$raw_alpha
+
+kr20 <- data.frame(
+  Subscale = c("Reporting", "Internal Validity - Bias", "Internal Validity - Confounding"),
+  "KR-20" = c(reportingDichAlpha, biasAlpha$total$raw_alpha, confoundingAlpha$total$raw_alpha),
+  Alpha = c(reportingAlpha$total$raw_alpha, biasAlpha$total$raw_alpha, confoundingAlpha$total$raw_alpha)
+)
+
+internalConsistency[,2:3] <- round(internalConsistency[,2:3], 3)
+internalConsistency$Subscale <- c(
+  rep("Reporting",7), rep("Internal Validity - Bias", 6), rep("Internal Validity - Confounding", 5)
+)
+internalConsistency$"KR-20" <- c(
+  rep(round(kr20[1,2], 3),7), rep(round(kr20[2,2], 3), 6), rep(round(kr20[3,2], 3), 5)
+)
+internalConsistency$Alpha <- c(
+  rep(round(kr20[1,3], 3),7), rep(round(kr20[2,3], 3), 6), rep(round(kr20[3,3], 3), 5)
+)
+```
+
+
+## Table 4
+### Internal Consistency of Subscales and Individual Items
+```{r icTable, echo = FALSE}
+
+# https://ardata-fr.github.io/flextable-book/index.html
+# https://ardata-fr.github.io/flextable-book/static/assets/img/figs/unnamed-chunk-9-1.png
+
+flextable(internalConsistency,
+          col_keys = c(names(internalConsistency)[4], "KR-20", "Alpha", names(internalConsistency)[1:3])) %>% 
+  merge_at(i = 1:7, j = 1) %>% merge_at(i = 8:13, j = 1) %>% merge_at(i = 14:18, j = 1) %>%
+  merge_at(i = 1:7, j = 2) %>% merge_at(i = 8:13, j = 2) %>% merge_at(i = 14:18, j = 2) %>%
+  merge_at(i = 1:7, j = 3) %>% merge_at(i = 8:13, j = 3) %>% merge_at(i = 14:18, j = 3) %>%
+  border_remove() %>% 
+  hline(i = c(7,13,18)) %>% hline_top() %>% hline_top(part = "header") %>% 
+  width(width = 6.5 / 6) %>% width(j = 1, width = 6.5 / 6 + .1) %>% width(j = 4, width = 6.5 /6 - .1) %>% 
+  align(align = "center", part = "all")
+  # autofit(add_w = .01, add_h = .01, unit = "mm", part = "header")
+
+```
+
+## Figure 1
+### Inter-Item Correlation Matrix
+```{r iiMatrix, echo = FALSE, fig.width = 6.5}
+rawMatrix <- dbModScored %>%
+  arrange(study) %>%
+  select(Q1:Q27) %>%
+  select_if(function(x) sd(x) != 0)
+
+fornow <- Hmisc::rcorr(x = as.matrix(rawMatrix), type = c("spearman"))
+# r_mat <- fornow$r[1:14,15:31]
+# p_mat <- fornow$P[1:14,15:31]
+
+# correlationMatrix <- cor(rawMatrixA, rawMatrixB, method = "spearman")
+
+
+
+subscalesRects <- rbind(
+  c("Q2","Q2", "Q10", "Q10"),
+  c("Q11","Q11","Q11","Q11"),
+  c("Q14", "Q14", "Q20", "Q20"),
+  c("Q21", "Q21", "Q26", "Q26"),
+  c("Q27", "Q27", "Q27", "Q27")
+)
+p_mat <- replace_na(fornow$P, 1)
+
+corrplot(fornow$r, method = 'color', col = COL1("Greys"),
+         tl.col = "black", tl.srt = 90, tl.cex = .5, tl.pos = "d",
+         p.mat = p_mat, sig.level = c(.001, .01, .05), insig = "label_sig",
+         pch.cex = 1, pch.col = "grey") %>%
+  corrRect(namesMat = subscalesRects)
+```
+*Note*. \*\*\* p<.001, \*\* p<.01, \* p<.05.
+
+
+## Noncompliance Check
+```{r noncomplianceCheck, echo=FALSE, warning=FALSE}
+#### Just computing the correlations####
+revACor <- round(cor(x = filter(dbModScored, reviewer == "A")$qualityIndex, y = filter(dbModScored, reviewer == "A")$globalScore, method = "spearman"), 3)
+revBCor <- round(cor(x = filter(dbModScored, reviewer == "B")$qualityIndex, y = filter(dbModScored, reviewer == "A")$globalScore, method = "spearman"), 3)
+revCor <- round(cor(x = dbModScored$qualityIndex, y = dbModScored$globalScore, method = "spearman"),3)
+
+noncomplianceBootstraps <- data.frame(
+  A = numeric(),
+  B = numeric(),
+  overall = numeric()
+)
+revA <- filter(dbModScored, reviewer == "A")
+revB <- filter(dbModScored, reviewer == "B")
+set.seed(2021)
+for (strap in 1:bootstrapSamples) {
+  bootstrapA <- revA[sample(1:12,12,replace=T),]
+  bootstrapB <- revB[sample(1:12,12,replace=T),]
+  bootstrapOverall <- dbModScored[sample(1:24,24,replace=T),]
+  
+  noncomplianceBootstraps[strap,"A"] <- cor(x = bootstrapA$qualityIndex, y = bootstrapA$globalScore, method = "spearman")
+  noncomplianceBootstraps[strap, "B"] <- cor(x = bootstrapB$qualityIndex, y = bootstrapB$globalScore, method = "spearman")
+  noncomplianceBootstraps[strap, "overall"] <- cor(x = bootstrapOverall$qualityIndex, y = bootstrapOverall$globalScore, method = "spearman")
+}
+rm(strap, revA, revB, bootstrapA, bootstrapB, bootstrapOverall)
+
+revACorCI <- unname(quantile(noncomplianceBootstraps$A, c(lowerConfInt, upperConfInt), na.rm = T))
+revBCorCI <- unname(quantile(noncomplianceBootstraps$B, c(lowerConfInt, upperConfInt), na.rm = T))
+revCorCI <- unname(quantile(noncomplianceBootstraps$B, c(lowerConfInt, upperConfInt), na.rm = T))
+
+#### Plotting (may be excluded from final version) ####
+# ggplot(dbModScored, aes(x = qualityIndex, y = globalScore, pch = reviewer)) +
+#   geom_smooth(aes(linetype = reviewer), method = "lm", formula = y ~ x, se = F, color = "#909090", show.legend = T) +
+#   geom_point() +
+#   labs(
+#     x = "Quality Index (Total Score)",
+#     y = "Global Score (Subjective Rating)",
+#     pch = "Reviewer",
+#     linetype = "Reviewer") +
+#   theme_minimal() +
+#   theme(
+#     legend.position = c(.2, .8),
+#     panel.grid = element_blank(),
+#     axis.line = element_line()
+#   )
+
+```
+
+A Spearman correlation was calculated to examine the relationship between Quality Index and Global Score for each Rater . This correlation indicates whether the Raters’ subjective assessments align with the objective assessments provided by the checklist. Confidence intervals were obtained using the aforementioned bootstrapping procedure. For Rater A, r = `r revACor` (`r confIntSize*100`% CI: [`r round(revACorCI, 3)`]). For Rater B, r = `r revBCor` (`r confIntSize*100`% CI: [`r round(revBCorCI, 3)`]). The overall correlation was r = `r revCor` (`r confIntSize*100`% CI: [`r round(revCorCI,3)`]).
+
+# Discussion
+
+Overall, the results seem similar to those reported by Downs & Black (1998), with inter-rater reliability and internal consistency appearing at similar levels. This suggests that our modification of this tool maintains many of the key properties that have resulted in the widespread adoption of this tool. Of note is the low variability in the External Validity subscale. Between both Raters, only one non-zero response was given to any question in this subscale. The studies that were assessed all utilized artificial category learning paradigms which are known to be very low in ecological validity. This subscale should receive further assessment in a different area of research.
+
+Downs & Black (1998) reported a mean Quality Index of 11.7 (SD = 4.64) for non-randomized studies, which is substantially lower than our mean of 19.75. This difference may be partially driven by the Reporting subscale, with our mean score (`r round(mean(dbModScored$reporting),3)`) and minimum score (`r min(dbModScored$reporting)`) being higher than those reported by Downs & Black. Additionally, some of the studies we assessed received non-zero scores on the Power subscale, unlike those assessed by Downs & Black. Crude summary statistics for the other subscales look comparable. It is unclear if these differences reflect a true difference in methodological quality between the two samples, however. It is possible that our modifications resulted in some checklist items becoming easier to achieve. Additionally, Downs & Black used raters who were experts in the field, which may have resulted in more conservative assessments. 
+
+## Inter-Rater Reliability
+
+```{r corNoSotoChunk, include = FALSE}
+wideNS <- dbModScoredWide %>% 
+  filter(study != "Soto et al. (2013)") %>% 
+  select(qualityIndexA, qualityIndexB)
+corNoSoto <- cor(wideNS$qualityIndexA, wideNS$qualityIndexB, method = "spearman")
+```
+
+A weak negative inter-rater correlation was found for the Internal Validity - Bias subscale. This suggests that both Raters had a tendency to give opposite scores within this subscale, indicating that one or more subscale items may have been unclear. Despite this, moderate positive inter-rater correlations in Quality Index and Internal Validity - Confounding were observed, suggesting high agreement between Raters. This high correlation for the Quality Index suggests that, despite variability at the subscale level, Raters tended to have high agreement in their risk of bias assessments. Figure 2 shows the agreement between both Raters. Of note is the study by Soto et al. (2013); this study received an unusually low score from Reviewer B. It is unclear at a glance what sets this study apart from the others,   but removing this study from the analysis results in a much stronger inter-rater correlation  (r = `r round(corNoSoto,3)`). Given the overall pattern, we expect that Rater A’s score is closer to the true score.
+
+## Figure 2
+### Inter-Rater Agreement in Quality Indices
+```{r qualityIndexIRRPlot, echo = FALSE}
+ggplot(dbModScoredWide, aes(x = qualityIndexA, y = qualityIndexB)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x, se = F, color = "black") +
+  geom_label_repel(aes(label = study), size = 3) +
+  labs(x = "Rater A", y = "Rater B") +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_line()
+  )
+
+```
+
+Of the 27 checklist items, 7 (`r round(700/27,3)`%) had no inter-rater disagreement. It is difficult to interpret this outcome given the low variability in these measures. Still, this suggests that these test items were clear and unambiguous. Items 16 and 5 had the highest rate of disagreement at 66.667%. Cohen's Kappa, a measure of agreement that considers the chance of random agreement, was negative for items 5, 17, and 21; these values are all small, however, and do not represent a notable amount of disagreement. Minimal agreement is seen in items 10 and 25,; weak agreement is seen in items 9, 23, 24, and 26; and moderate agreement is seen in items 3 and 27 (McHugh, 2012). 
+
+## Internal Consistency
+
+The Bias subscale had a negative Cronbach's Alpha. In many cases, this indicates an issue with data, such as failure to reverse score some (but not all) data points. This is not the case here. Instead, it seems to be an issue with the subscale itself. Despite this, positive Alpha values for the other subscales indicate acceptable levels of internal consistency. Figure 1 shows an inter-item correlation matrix. Items within the same subscale should be correlated with each other. While this was not always the case, the figure shows a small amount of clustering within the subscales, also suggesting a good amount of internal consistency.
+
+## Noncompliance Check
+The potential for non-compliance in this study was low, but present. Reviewers had an interest in adequately completing the checklist due to their involvement in the associated systematic review. However, raters completed the assessments remotely, which made it difficult to directly monitor compliance. This was addressed by conducting a Spearman correlation between Quality Index and Global Score for each reviewer. We expected these values to be positively correlated. Counter to our prediction, we did not find a significant correlation between these values. Global Scores tended to be high and had low variability. This may be due to sampling bias; the papers included in this study were all peer-reviewed journal articles that passed through title & abstract screening for a systematic review, making it possible that reviewers assigned high Global Scores to all studies despite variability in their Quality Indices. Future work should be sure to include pre-prints, dissertations, theses, and gray literature of varying quality to avoid this issue. Additionally, the reviewers were not experts in the field. Experts in the field may be more consistent in their responses.
+
+## Conclusion
+
+This study was limited by its reviewers and included studies. Despite limitations, the results suggest that a domain-general adaptation of the Downs-Black Tool (1998) is feasible for use in systematic literature reviews. 
